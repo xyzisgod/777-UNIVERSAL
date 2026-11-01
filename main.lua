@@ -1,4 +1,5 @@
-local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
+-- mstudio45 fork: same API as Linoria, adds touch + mobile support
+local repo = 'https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/'
 
 local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
 local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
@@ -8,6 +9,9 @@ local Players = game:GetService('Players')
 local Player = Players.LocalPlayer
 local RunService = game:GetService('RunService')
 local UserInputService = game:GetService('UserInputService')
+local CoreGui = game:GetService('CoreGui')
+
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 local aimbotlib = loadstring(game:HttpGet('https://raw.githubusercontent.com/Exunys/Aimbot-V3/refs/heads/main/src/Aimbot.lua'))()
 
@@ -125,7 +129,8 @@ local function getTriggerTarget()
     local cam = workspace.CurrentCamera
     if not cam then return nil end
 
-    local pos = UserInputService:GetMouseLocation()
+    -- mobile has no cursor, use screen center as crosshair
+    local pos = isMobile and (cam.ViewportSize / 2) or UserInputService:GetMouseLocation()
     local ray = cam:ViewportPointToRay(pos.X, pos.Y)
 
     local params = RaycastParams.new()
@@ -318,7 +323,18 @@ track(RunService.Heartbeat:Connect(function()
     if r.fly then
         local cam = workspace.CurrentCamera
         local dir = Vector3.zero
-        if cam and not UserInputService:GetFocusedTextBox() then
+        if cam and isMobile then
+            -- thumbstick moves relative to camera, jump button goes up
+            local cf = cam.CFrame
+            local md = hum.MoveDirection
+            if md.Magnitude > 0 then
+                local flatLook = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+                local fwd = flatLook.Magnitude > 0 and flatLook.Unit:Dot(md) or 0
+                local rgt = cf.RightVector:Dot(md)
+                dir += cf.LookVector * fwd + cf.RightVector * rgt
+            end
+            if hum.Jump then dir += Vector3.yAxis end
+        elseif cam and not UserInputService:GetFocusedTextBox() then
             local cf = cam.CFrame
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cf.LookVector end
             if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cf.LookVector end
@@ -394,6 +410,7 @@ local Window = Library:CreateWindow({
     Title = '777',
     Center = true,
     AutoShow = true,
+    Size = isMobile and UDim2.fromOffset(460, 290) or UDim2.fromOffset(550, 600),
     TabPadding = 8,
     MenuFadeTime = 0.2
 })
@@ -639,6 +656,37 @@ local KeyPickers = {
 }
 
 Library.ToggleKeybind = Options.MenuKeybind
+
+-- mobile: floating button to open/close the menu (no Insert key on touch)
+if isMobile then
+    local btnGui = Instance.new('ScreenGui')
+    btnGui.Name = 'MenuToggle777'
+    btnGui.ResetOnSpawn = false
+    btnGui.DisplayOrder = 999
+    btnGui.Parent = (gethui and gethui()) or CoreGui
+
+    local btn = Instance.new('TextButton')
+    btn.Size = UDim2.fromOffset(44, 44)
+    btn.Position = UDim2.new(0, 10, 0.5, -22)
+    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    btn.BackgroundTransparency = 0.2
+    btn.Text = '777'
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = Enum.Font.Code
+    btn.TextSize = 14
+    btn.Parent = btnGui
+    Instance.new('UICorner', btn).CornerRadius = UDim.new(0, 8)
+
+    btn.Activated:Connect(function()
+        if Library.Toggle then
+            Library:Toggle()
+        else
+            warn('[ui] Library:Toggle missing')
+        end
+    end)
+
+    track({ Disconnect = function() btnGui:Destroy() end })
+end
 
 -- main --
 
