@@ -678,11 +678,7 @@ if isMobile then
     Instance.new('UICorner', btn).CornerRadius = UDim.new(0, 8)
 
     btn.Activated:Connect(function()
-        if Library.Toggle then
-            Library:Toggle()
-        else
-            warn('[ui] Library:Toggle missing')
-        end
+        if Library.Toggle then Library:Toggle() end
     end)
 
     track({ Disconnect = function() btnGui:Destroy() end })
@@ -690,9 +686,6 @@ end
 
 -- main --
 
-if not hasDrawing then warn('[esp] Drawing api missing, esp disabled') end
-print('[trigger] mouse1click:', typeof(mouse1click))
-print('[save] writefile:', typeof(writefile), 'isfile:', typeof(isfile))
 
 for _, p in ipairs(Players:GetPlayers()) do setupPlayer(p) end
 track(Players.PlayerAdded:Connect(setupPlayer))
@@ -724,7 +717,7 @@ local okLoad, errLoad = pcall(function()
     end
     SaveManager:LoadAutoloadConfig()
 end)
-if not okLoad then warn('[save]', errLoad) end
+if not okLoad and kDebug then warn('[save]', errLoad) end
 
 -- sync everything from UI after load, callbacks may not fire
 local function syncFromUI()
