@@ -655,8 +655,10 @@ local KeyPickers = {
     })
 }
 
-local Options = Library.Options or getgenv().Options
-Library.ToggleKeybind = Options.MenuKeybind
+local Opts = Library.Options or getgenv().Options
+if Opts and Opts.MenuKeybind then
+    Library.ToggleKeybind = Opts.MenuKeybind
+end
 
 -- mobile: floating button to open/close the menu (no Insert key on touch)
 if isMobile then
