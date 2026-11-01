@@ -12,20 +12,17 @@ local UserInputService = game:GetService('UserInputService')
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-local aimbotlib = loadstring(game:HttpGet('https://raw.githubusercontent.com/Exunys/Aimbot-V3/refs/heads/main/src/Aimbot.lua'))()
-
 -- config --
 local kDebug = false
 local kEspColor = Color3.fromRGB(255, 255, 255)
 local kAutosaveSec = 10
 local kFolder = '777'
 local kAutoFile = kFolder .. '/settings/autoload.txt'
+local kMouseOffset = Vector2.zero -- FILL: mouse mode lands offset by the topbar? use GuiService:GetGuiInset()
 
 local hasDrawing = Drawing ~= nil and Drawing.new ~= nil
 local lastClick = 0
 local lastHit
-
-aimbotlib.Load()
 
 local settings = {
     ['aimbot'] = {
@@ -33,6 +30,9 @@ local settings = {
         ['targetpart'] = 'Head',
         ['smooth'] = 0,
         ['wallcheck'] = false,
+        ['teamcheck'] = true,
+        ['mode'] = 'Camera',
+        ['maxdist'] = 1000,
         ['fov'] = { ['radius'] = 180 }
     },
     ['visuals'] = {
@@ -42,7 +42,8 @@ local settings = {
         ['name'] = false,
         ['distance'] = false,
         ['tracer'] = false,
-        ['wallcheck'] = false
+        ['wallcheck'] = false,
+        ['maxdist'] = 1000
     },
     ['trigger'] = {
         ['enabled'] = false,
@@ -67,15 +68,6 @@ local function track(conn) table.insert(connections, conn); return conn end
 
 -- helpers --
 
-local function syncAimbotFlags()
-    if not (aimbotlib and aimbotlib.Settings) then return end
-    aimbotlib.Settings.Enabled     = settings.aimbot.enabled
-    aimbotlib.Settings.LockPart    = settings.aimbot.targetpart
-    aimbotlib.Settings.Sensitivity = settings.aimbot.smooth or 0
-    aimbotlib.Settings.WallCheck   = settings.aimbot.wallcheck
-    aimbotlib.FOVSettings.Radius   = settings.aimbot.fov.radius or 180
-end
-
 -- nearest Model at or above inst
 local function upModel(inst)
     while inst and not inst:IsA('Model') do inst = inst.Parent end
@@ -95,9 +87,9 @@ local function isMine(inst)
 end
 
 -- true when nothing solid sits between camera and target
-local function isVisible(char)
+local function isVisible(char, part)
     local cam = workspace.CurrentCamera
-    local part = char:FindFirstChild('Head') or char:FindFirstChild('HumanoidRootPart')
+    part = part or char:FindFirstChild('Head') or char:FindFirstChild('HumanoidRootPart')
     if not (cam and part) then return false end
 
     local ignore = { char, cam }
@@ -235,6 +227,11 @@ local function updateEsp()
             continue
         end
 
+        if (cam.CFrame.Position - root.Position).Magnitude > v.maxdist then
+            hideEsp(obj)
+            continue
+        end
+
         if v.wallcheck and not isVisible(char) then
             hideEsp(obj)
             continue
@@ -282,6 +279,62 @@ end
 
 local function setupPlayer(player)
     createEsp(player)
+end
+
+-- aimbot (own loop: Camera = overwrite CFrame, Mouse = mousemoveabs) --
+
+local fovCircle = hasDrawing and newDraw('Circle', { Thickness = 1, NumSides = 64, Filled = false, Color = kEspColor, Visible = false }) or nil
+
+local function getAimTarget(cam, center)
+    local a = settings.aimbot
+    local best, bestDist
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == Player then continue end
+        if a.teamcheck and Player.Team ~= nil and p.Team == Player.Team then continue end
+        local char = p.Character
+        local hum = char and char:FindFirstChildOfClass('Humanoid')
+        local part = char and char:FindFirstChild(a.targetpart)
+        if not (hum and part and hum.Health > 0) then continue end
+        if (part.Position - cam.CFrame.Position).Magnitude > a.maxdist then continue end
+        local sp, onScreen = cam:WorldToViewportPoint(part.Position)
+        if not onScreen then continue end
+        local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+        if d > a.fov.radius or (bestDist and d >= bestDist) then continue end
+        if a.wallcheck and not isVisible(char, part) then continue end
+        best, bestDist = part, d
+    end
+    return best
+end
+
+local function aimAt(cam, part)
+    local a = settings.aimbot
+    local alpha = a.smooth <= 0 and 1 or math.clamp(1 - a.smooth, 0.05, 1)
+    if a.mode == 'Mouse' and mousemoveabs then
+        local sp = cam:WorldToViewportPoint(part.Position)
+        local cur = UserInputService:GetMouseLocation()
+        local nxt = cur:Lerp(Vector2.new(sp.X, sp.Y), alpha) + kMouseOffset
+        mousemoveabs(nxt.X, nxt.Y)
+    else
+        cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position, part.Position), alpha)
+    end
+end
+
+local function updateAim()
+    local a = settings.aimbot
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local center = isMobile and (cam.ViewportSize / 2) or UserInputService:GetMouseLocation()
+    if fovCircle then
+        fovCircle.Visible = a.enabled
+        fovCircle.Position = center
+        fovCircle.Radius = a.fov.radius
+    end
+    if not a.enabled or Library.Toggled then return end
+    -- PC: hold aim key (default RMB). mobile: always on while enabled
+    local key = Library.Options.AimKey
+    if not isMobile and not (key and key:GetState()) then return end
+    local part = getAimTarget(cam, center)
+    if part then aimAt(cam, part) end
 end
 
 -- rage --
@@ -397,7 +450,7 @@ local function unload()
     for player in pairs(espObjects) do removeEsp(player) end
     restoreRage()
 
-    pcall(function() aimbotlib:Exit() end)
+    if fovCircle then pcall(function() fovCircle:Remove() end) end
     pcall(function() Library:Unload() end)
 
     getgenv().settings777 = nil
@@ -443,7 +496,6 @@ local Toggles = {
         Tooltip = 'Enables/disables aimbot.',
         Callback = function(value)
             settings.aimbot.enabled = value
-            syncAimbotFlags()
         end
     }),
     Visuals1 = GroupBoxes.Visuals1:AddToggle('Enabled', {
@@ -459,7 +511,7 @@ local WallToggles = {
         Text = 'Wallcheck',
         Default = settings.aimbot.wallcheck,
         Tooltip = 'Ignore targets behind walls.',
-        Callback = function(v) settings.aimbot.wallcheck = v; syncAimbotFlags() end
+        Callback = function(v) settings.aimbot.wallcheck = v end
     }),
     Trigger = GroupBoxes.Trigger1:AddToggle('TriggerWallcheck', {
         Text = 'Wallcheck',
@@ -511,7 +563,7 @@ local Sliders = {
         Max = 1,
         Rounding = 1,
         Compact = false,
-        Callback = function(v) settings.aimbot.smooth = v; syncAimbotFlags() end
+        Callback = function(v) settings.aimbot.smooth = v end
     }),
     Aiming2 = GroupBoxes.Aiming1:AddSlider('fovaimbot', {
         Text = 'Aim fov radius',
@@ -520,7 +572,7 @@ local Sliders = {
         Max = 500,
         Rounding = 1,
         Compact = false,
-        Callback = function(v) settings.aimbot.fov.radius = v; syncAimbotFlags() end
+        Callback = function(v) settings.aimbot.fov.radius = v end
     })
 }
 
@@ -531,15 +583,50 @@ local Dropdowns = {
         Multi = false,
         Text = 'Target Part',
         Tooltip = 'Select part to target when aiming.',
-        Callback = function(value)
-            settings.aimbot.targetpart = value
-            if aimbotlib and aimbotlib.Settings then
-                aimbotlib.Settings.LockPart = value
-                aimbotlib.Restart()
-            end
-        end
+        Callback = function(value) settings.aimbot.targetpart = value end
     })
 }
+
+local AimExtra = {
+    Mode = GroupBoxes.Aiming1:AddDropdown('AimMode', {
+        Values = { 'Camera', 'Mouse' },
+        Default = 1,
+        Multi = false,
+        Text = 'Aim method',
+        Tooltip = 'Camera = overwrites camera. Mouse = mousemoveabs.',
+        Callback = function(v) settings.aimbot.mode = v end
+    }),
+    Dist = GroupBoxes.Aiming1:AddSlider('AimMaxDist', {
+        Text = 'Aim max distance',
+        Default = settings.aimbot.maxdist,
+        Min = 50,
+        Max = 3000,
+        Rounding = 0,
+        Callback = function(v) settings.aimbot.maxdist = v end
+    }),
+    Team = GroupBoxes.Aiming1:AddToggle('AimbotTeamcheck', {
+        Text = 'Team check',
+        Default = settings.aimbot.teamcheck,
+        Callback = function(v) settings.aimbot.teamcheck = v end
+    })
+}
+
+Toggles.Aiming1:AddKeyPicker('AimKey', {
+    Default = 'MB2',
+    SyncToggleState = false,
+    Mode = 'Hold',
+    Text = 'Aim key',
+    NoUI = false
+})
+
+local EspDist = GroupBoxes.Visuals1:AddSlider('EspMaxDist', {
+    Text = 'ESP max distance',
+    Default = settings.visuals.maxdist,
+    Min = 50,
+    Max = 3000,
+    Rounding = 0,
+    Callback = function(v) settings.visuals.maxdist = v end
+})
 
 local TriggerToggles = {
     Enabled = GroupBoxes.Trigger1:AddToggle('TriggerEnabled', {
@@ -672,6 +759,10 @@ track(RunService.RenderStepped:Connect(function()
 end))
 
 track(RunService.RenderStepped:Connect(function()
+    pcall(updateAim)
+end))
+
+track(RunService.RenderStepped:Connect(function()
     if not settings.trigger.enabled then return end
     if Library.Toggled then return end -- menu open, click would hit UI
     if tick() - lastClick < settings.trigger.delay then return end
@@ -681,8 +772,6 @@ track(RunService.RenderStepped:Connect(function()
         mouse1click()
     end
 end))
-
-aimbotlib.Restart()
 
 -- saving: first run creates 'default' and marks it autoload
 local okLoad, errLoad = pcall(function()
@@ -724,7 +813,10 @@ local function syncFromUI()
     settings.rage.jump       = RageUI.Jump.Value
     settings.rage.jumpvalue  = RageUI.JumpValue.Value
 
-    syncAimbotFlags()
+    settings.aimbot.mode       = AimExtra.Mode.Value
+    settings.aimbot.maxdist    = AimExtra.Dist.Value
+    settings.aimbot.teamcheck  = AimExtra.Team.Value
+    settings.visuals.maxdist   = EspDist.Value
 end
 
 syncFromUI()
